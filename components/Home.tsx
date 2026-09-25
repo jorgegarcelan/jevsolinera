@@ -9,6 +9,7 @@ import Receipt from "@/components/Receipt";
 import Reels from "@/components/Reels";
 import Starburst from "@/components/Starburst";
 import TrackRecord from "@/components/TrackRecord";
+import { EVENT_TYPES, TYPICAL_3D_MOVE_40L } from "@/lib/decide";
 import { FUELS, type FuelId } from "@/lib/minetur";
 import type { Analysis } from "@/lib/types";
 
@@ -19,16 +20,30 @@ const StationMap = dynamic(() => import("@/components/StationMap"), {
 
 type Place = { lat: number; lon: number; label: string };
 
-const SIGN = {
-  today: { title: "Llena hoy", sub: "Lo más probable es que en los próximos días esté más cara." },
-  partial: { title: "Echa lo justo", sub: "La cosa no está clara: pon para unos días y vuelve a mirar." },
-  wait: { title: "Espera", sub: "Todo apunta a que bajará en los próximos días." },
-} as const;
-const ODDS = [
-  ["today", "Hoy"],
-  ["partial", "Lo justo"],
-  ["wait", "Espera"],
-] as const;
+const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const dayMonth = (iso: string) => `${Number(iso.slice(8, 10))} de ${MONTHS[Number(iso.slice(5, 7)) - 1]}`;
+const eur2 = (n: number) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+
+/** Título y subtítulo del rótulo. */
+function signCopy(d: Analysis["decision"], headlines: number, saving?: number) {
+  const e = d.event;
+  if (d.overridden && !(d.verdict === "today" && e))
+    return { title: d.verdict === "partial" ? "Echa lo justo" : d.verdict === "today" ? "Echa hoy" : "Espera", sub: d.overridden };
+  if (d.verdict === "today" && e)
+    return {
+      title: `Llena antes del ${dayMonth(e.date!)}`,
+      sub: d.overridden ?? `${EVENT_TYPES[e.type]}: a partir del ${e.label} el combustible será más caro.`,
+    };
+  if (d.verdict === "wait" && e)
+    return { title: `Espera al ${dayMonth(e.date!)}`, sub: `${EVENT_TYPES[e.type]}: a partir del ${e.label} el combustible será más barato.` };
+  return {
+    title: "Hoy da igual",
+    sub:
+      d.source === "jev"
+        ? `Jev ha leído ${headlines} titulares y ninguno anuncia un cambio con fecha. Esperar o no mueve de media ${eur2(TYPICAL_3D_MOVE_40L)} un depósito${saving && saving > 1 ? `; ir a la más barata te ahorra ${eur2(saving)}` : ""}.`
+        : "Sin leer las noticias no hay avisos: esperar o no apenas cambia el precio. Lo que ahorra es la gasolinera.",
+  };
+}
 
 const km = (n: number) => (n < 1 ? `${Math.round(n * 1000)} m` : `${n.toLocaleString("es-ES", { maximumFractionDigits: 1 })} km`);
 const pctTxt = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
@@ -138,8 +153,9 @@ export default function Home() {
       z: data.province,
       d: new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" }),
     });
+    if (d.event?.date && d.verdict !== "any") qs.set("e", d.event.date);
     const url = `${location.origin}/?${qs}`;
-    const text = `${SIGN[d.verdict].title}: ${FUELS[data.fuel].label} a ${station.price.toFixed(3).replace(".", ",")} € en ${station.name} (${data.province}). Según jevsolinera.`;
+    const text = `${signCopy(d, data.headlines.length, saving).title}: ${FUELS[data.fuel].label} a ${station.price.toFixed(3).replace(".", ",")} € en ${station.name} (${data.province}). Según jevsolinera.`;
     try {
       if (navigator.share) {
         await navigator.share({ title: "jevsolinera", text, url });
@@ -272,25 +288,46 @@ export default function Home() {
                 <span className="bolt bl" />
                 <span className="bolt br" />
                 <p className="sign-kicker">
-                  La decisión de hoy · {FUELS[data.fuel].label}
+                  ¿Echo hoy o espero? · {FUELS[data.fuel].label}
                 </p>
-                <h1 className="sign-title">{SIGN[d.verdict].title}</h1>
-                <p className="sign-sub">{d.overridden ?? SIGN[d.verdict].sub}</p>
-                <div className="odds" aria-label="Probabilidades">
-                  <div className="odds-bar">
-                    {ODDS.map(([k]) => (
-                      <i key={k} className={`o-${k}`} style={{ flexGrow: Math.max(d.probabilities[k], 0.015) }} />
-                    ))}
+                {(() => {
+                  const copy = signCopy(d, data.headlines.length, saving);
+                  return (
+                    <>
+                      <h1 className={`sign-title ${copy.title.length > 13 ? "long" : ""}`}>{copy.title}</h1>
+                      <p className="sign-sub">{copy.sub}</p>
+                    </>
+                  );
+                })()}
+                {d.event ? (
+                  <div className="evidence">
+                    <p className="evidence-kicker">
+                      Lo anuncia{d.event.headlines.length > 1 ? `n ${d.event.headlines.length} titulares` : " la prensa"} · Jev lo da por
+                      seguro al {Math.round(d.event.confidence * 100)} %
+                    </p>
+                    <ul>
+                      {d.event.headlines.slice(0, 3).map((i) => {
+                        const h = data.headlines[i];
+                        return (
+                          <li key={i}>
+                            {h.url ? (
+                              <a href={h.url} target="_blank" rel="noopener noreferrer">
+                                «{h.title}»
+                              </a>
+                            ) : (
+                              <>«{h.title}»</>
+                            )}{" "}
+                            <small>{h.source}</small>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
-                  <div className="odds-legend">
-                    {ODDS.map(([k, label]) => (
-                      <span key={k} className={d.verdict === k ? "win" : ""}>
-                        <i className={`o-${k}`} />
-                        {label} <b>{Math.round(d.probabilities[k] * 100)} %</b>
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                ) : d.source === "jev" ? (
+                  <p className="evidence-none">
+                    <b>{data.headlines.length}</b> titulares revisados · <b>0</b> avisos con fecha en los próximos 14 días
+                  </p>
+                ) : null}
                 <div className="sign-actions">
                   <button type="button" className="btn btn-cream" onClick={share}>
                     <svg viewBox="0 0 24 24" aria-hidden>
@@ -307,7 +344,8 @@ export default function Home() {
                 <p className="sign-meta">
                   {d.source === "jev" ? (
                     <>
-                      Noticias leídas por <b>Jev</b> ({d.model}) + tendencias de precios · seguridad {Math.round(d.confidence * 100)} %
+                      Prensa leída por <b>Jev</b> ({d.model})
+                      {d.news?.call && ` en ${d.news.call.ms.toLocaleString("es-ES")} ms · ${d.news.call.questions} preguntas`}
                     </>
                   ) : (
                     <>Estimación básica sin Jev{d.error ? ` (${d.error})` : ""}</>

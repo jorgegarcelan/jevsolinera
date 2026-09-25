@@ -1,9 +1,10 @@
 import Trend from "./Trend";
+import { EVENT_TYPES, groupEvents } from "@/lib/decide";
 import { FUELS } from "@/lib/minetur";
 import type { Analysis } from "@/lib/types";
 
 const pct = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
-const WORD = { today: "HOY", partial: "LO JUSTO", wait: "ESPERA" } as const;
+const WORD = { today: "LLENA HOY", partial: "LO JUSTO", wait: "ESPERA", any: "DA IGUAL" } as const;
 const TANK = { reserva: "En reserva", cuarto: "1/4", medio: "Medio", lleno: "3/4 o más" } as const;
 
 function Line({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
@@ -21,7 +22,6 @@ export default function Receipt({ data, tank }: { data: Analysis; tank: keyof ty
   const d = data.decision;
   const t = data.stats.trend;
   const [date, time] = data.updated.split(" ");
-  const max = Math.max(...d.factors.map((f) => Math.abs(f.value)), 0.004);
   const ticket = (date ?? "").replace(/\//g, "").slice(0, 4) + (time ?? "").replace(/:/g, "").slice(0, 4);
 
   return (
@@ -46,21 +46,28 @@ export default function Receipt({ data, tank }: { data: Analysis; tank: keyof ty
         <p className="rc-section">Precio en tu zona · 30 días</p>
         <Trend series={data.stats.series} province={data.province} />
         <hr />
-        <p className="rc-section">Qué pesa en la decisión</p>
-        <div className="rc-scale" aria-hidden>
-          <span>← espera</span>
-          <span>echa hoy →</span>
-        </div>
-        <ul className="rc-factors">
-          {d.factors.map((f) => (
-            <li key={f.key}>
-              <span className="rc-f-label">{f.label}</span>
-              <span className="rc-f-bar">
-                <i className={f.value > 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(f.value) / max) * 50}%` }} />
-              </span>
-            </li>
-          ))}
-        </ul>
+        <p className="rc-section">Avisos en la prensa</p>
+        {d.news ? (
+          d.news.events.length ? (
+            <ul className="rc-events">
+              {groupEvents(d.news.events).map((e, k) => (
+                <li key={k}>
+                  <span>
+                    {EVENT_TYPES[e.type]}
+                    {e.fuels !== "both" ? ` (${e.fuels === "diesel" ? "diésel" : "gasolina"})` : ""}
+                  </span>
+                  <span>{e.date ? e.date.split("-").reverse().slice(0, 2).join("/") : "sin fecha"}</span>
+                  <span>{e.direction === "up" ? "▲" : "▼"}</span>
+                  <span>{Math.round(e.confidence * 100)} %</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="rc-muted">Ninguno en {data.headlines.length} titulares.</p>
+          )
+        ) : (
+          <p className="rc-muted">Sin Jev no se leen las noticias.</p>
+        )}
         <hr />
         <ul className="rc-notes">
           {d.reasons.map((r, i) => (
@@ -70,6 +77,7 @@ export default function Receipt({ data, tank }: { data: Analysis; tank: keyof ty
         {data.headlines.length > 0 && <p className="rc-see">» Titulares y lo que lee Jev en cada uno: en «El Heraldo del Surtidor», más abajo.</p>}
         <hr className="double" />
         <Line k="VEREDICTO" v={WORD[d.verdict]} strong />
+        {d.event && <Line k="Fecha clave" v={d.event.date!.split("-").reverse().join("/")} />}
         <Line k="Seguridad" v={`${Math.round(d.confidence * 100)} %`} />
         <Line k="Atendido por" v={d.source === "jev" ? `Jev · ${d.model}` : "Regla básica"} />
         <div className="rc-barcode" aria-hidden />

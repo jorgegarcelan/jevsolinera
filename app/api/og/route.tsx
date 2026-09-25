@@ -17,10 +17,12 @@ const C = {
   muted: "#6b6454",
 };
 const VERDICT = {
-  today: { color: "#a8251c", word: "Hoy", title: "LLENA HOY" },
-  partial: { color: "#c07d14", word: "Lo justo", title: "ECHA LO JUSTO" },
-  wait: { color: "#276f60", word: "Espera", title: "ESPERA" },
+  today: { color: "#a8251c", word: "Hoy", title: "LLENA HOY", withDate: "LLENA ANTES DEL" },
+  partial: { color: "#c07d14", word: "Lo justo", title: "ECHA LO JUSTO", withDate: "ECHA LO JUSTO" },
+  wait: { color: "#276f60", word: "Espera", title: "ESPERA", withDate: "ESPERA AL" },
+  any: { color: "#2b3f66", word: "Da igual", title: "HOY DA IGUAL", withDate: "HOY DA IGUAL" },
 } as const;
+const MONTHS = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
 const FUEL: Record<string, string> = { g95: "Gasolina 95", g98: "Gasolina 98", diesel: "Diésel", dieselp: "Diésel Premium", glp: "GLP" };
 
 // Google Fonts sirve TTF (lo que necesita next/og) si no pides woff2; `text` recorta la fuente.
@@ -52,7 +54,8 @@ function star(size: number, fill: string, core: string) {
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   const v = q.get("v");
-  const verdict = v === "today" || v === "partial" || v === "wait" ? VERDICT[v] : null;
+  const verdict = v === "today" || v === "partial" || v === "wait" || v === "any" ? VERDICT[v] : null;
+  const ev = /^\d{4}-\d{2}-\d{2}$/.test(q.get("e") ?? "") ? q.get("e")! : null;
   const fuel = FUEL[q.get("f") ?? ""] ?? null;
   const priceNum = Number(q.get("p"));
   const price = priceNum > 0 && priceNum < 10 ? priceNum.toFixed(3).replace(".", ",") : null;
@@ -64,7 +67,11 @@ export async function GET(req: NextRequest) {
     : null;
 
   const word = verdict?.word ?? "¿?";
-  const title = verdict?.title ?? "¿LLENO HOY O ESPERO?";
+  const title = verdict
+    ? ev && (v === "today" || v === "wait")
+      ? `${verdict.withDate} ${Number(ev.slice(8, 10))} ${MONTHS[Number(ev.slice(5, 7)) - 1]}`
+      : verdict.title
+    : "¿LLENO HOY O ESPERO?";
   const color = verdict?.color ?? "#9a8f78";
   const kicker = verdict
     ? ["La decisión de hoy", fuel, zone].filter(Boolean).join(" · ").toUpperCase()
@@ -133,7 +140,7 @@ export async function GET(req: NextRequest) {
           {/* Rótulo */}
           <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
             <span style={{ fontFamily: "Sign", fontSize: 22, letterSpacing: 4, color: verdict ? color : C.red }}>{kicker}</span>
-            <span style={{ fontFamily: "Sign", fontSize: verdict ? 128 : 96, lineHeight: 0.95, color: verdict ? color : C.ink, marginTop: 8, textShadow: "3px 4px 0 rgba(0,0,0,0.12)" }}>
+            <span style={{ fontFamily: "Sign", fontSize: !verdict ? 96 : title.length > 14 ? 96 : 128, lineHeight: 0.95, color: verdict ? color : C.ink, marginTop: 8, textShadow: "3px 4px 0 rgba(0,0,0,0.12)" }}>
               {title}
             </span>
 

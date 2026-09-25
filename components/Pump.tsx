@@ -14,7 +14,7 @@ export const GRADES = {
 } as const;
 export type GradeId = keyof typeof GRADES;
 
-const WORD: Record<Verdict, string> = { today: "Hoy", partial: "Lo justo", wait: "Espera" };
+const WORD: Record<Verdict, string> = { today: "Hoy", partial: "Lo justo", wait: "Espera", any: "Da igual" };
 
 const n2 = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
 const n3 = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 });

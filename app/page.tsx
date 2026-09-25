@@ -4,9 +4,10 @@ import Home from "@/components/Home";
 type Params = Promise<Record<string, string | string[] | undefined>>;
 
 const VERDICT = {
-  today: "Hoy toca llenar",
+  today: "Llena antes de que suba",
   partial: "Hoy, echa lo justo",
-  wait: "Hoy mejor espera",
+  wait: "Mejor espera",
+  any: "Hoy da igual el día: importa la gasolinera",
 } as const;
 const FUEL: Record<string, string> = { g95: "Gasolina 95", g98: "Gasolina 98", diesel: "Diésel", dieselp: "Diésel Premium", glp: "GLP" };
 
@@ -16,7 +17,7 @@ export async function generateMetadata({ searchParams }: { searchParams: Params 
   const get = (k: string) => (typeof q[k] === "string" ? (q[k] as string).slice(0, 40) : undefined);
   const v = get("v") as keyof typeof VERDICT | undefined;
   const og = new URLSearchParams();
-  for (const k of ["v", "f", "p", "s", "z", "d"]) {
+  for (const k of ["v", "f", "p", "s", "z", "d", "e"]) {
     const val = get(k);
     if (val) og.set(k, val);
   }

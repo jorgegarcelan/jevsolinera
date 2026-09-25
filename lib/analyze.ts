@@ -134,7 +134,7 @@ export async function analyze({ lat, lon, fuel, tank, liters }: AnalyzeInput): P
 
   const [headlines, brent] = await Promise.all([headlinesP, brentP]);
   const today = madridDate(0);
-  const decision = await decide({ fuel, tank, trend, brent, weekday: today.weekday, headlines });
+  const decision = await decide({ fuel, tank, trend, brent, today: today.iso, headlines });
   const localMedian = series.find((x) => x.daysAgo === 0)?.local ?? stations[0].price;
 
   return {
@@ -165,7 +165,8 @@ export async function analyze({ lat, lon, fuel, tank, liters }: AnalyzeInput): P
       provName: nearby.find((x) => x.s.provinceId === mainProv)!.s.province,
       provinces,
       verdict: decision.market,
-      probabilities: decision.probabilities,
+      confidence: decision.confidence,
+      event: decision.market !== "any" && decision.event ? { date: decision.event.date!, direction: decision.event.direction, type: decision.event.type } : undefined,
       source: decision.source,
       median: localMedian,
       prices: Object.fromEntries(nearby.map(({ s }) => [s.id, s.prices[fuel]!])),

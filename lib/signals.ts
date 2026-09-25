@@ -14,9 +14,26 @@ const LISTING = /m[aá]s barat[ao]s? (de|en) |consulta(r)? (el|los) precio|preci
 // del surtidor español. Lo global (crudo, OPEP, EE. UU. exportando diésel) sí se queda.
 const FOREIGN =
   /\b(per[uú]|lima|m[eé]xico|argentin|chile|colombia|ecuador|bolivia|venezuela|uruguay|paraguay|guatemala|honduras|salvador|nicaragua|costa rica|panam[aá]|dominicana|cuba|puerto rico|italia|alemania|bundestag|francia|portugal|reino unido|andorra|marruecos)/i;
-export const MAX_HEADLINES = 12; // los mismos que lee Jev y que enseña el ticket
+export const MAX_HEADLINES = 20; // los mismos que lee Jev y que enseña el periódico
 
 export const NEWS_QUERY = "(precio gasolina OR diésel OR carburantes OR gasolineras OR Brent) España";
+// Noticias que anuncian cambios con fecha: impuestos, bonificaciones, huelgas, operación salida…
+export const EVENTS_QUERY =
+  '(bonificación OR impuesto OR IVA OR hidrocarburos OR huelga OR descuento OR ayuda OR "operación salida" OR "a partir del" OR "antes del") (gasolina OR carburantes OR combustible OR diésel) España';
+
+/** Titulares generales (4 días) + titulares de eventos (7 días), sin repetir, del más reciente al más antiguo. */
+export function mergeHeadlines(general: Headline[], events: Headline[], max = MAX_HEADLINES) {
+  const seen = new Set<string>();
+  const pick: Headline[] = [];
+  const push = (h: Headline) => {
+    const k = h.title.toLowerCase().slice(0, 60);
+    if (!seen.has(k) && pick.length < max) (seen.add(k), pick.push(h));
+  };
+  general.slice(0, 12).forEach(push);
+  events.forEach(push);
+  general.slice(12).forEach(push);
+  return pick.sort((a, b) => b.date.localeCompare(a.date));
+}
 
 /** Titulares de un feed RSS de Google News: filtrados, sin duplicados, del más reciente al más antiguo. */
 export function parseFeed(xml: string): Headline[] {
@@ -59,8 +76,11 @@ let newsCache: { at: number; items: Headline[] } | null = null;
 export async function getHeadlines(): Promise<Headline[]> {
   if (newsCache && Date.now() - newsCache.at < 30 * 60_000) return newsCache.items;
   try {
-    const items = await fetchFeed(`${NEWS_QUERY} when:4d`);
-    newsCache = { at: Date.now(), items: items.slice(0, MAX_HEADLINES) };
+    const [general, events] = await Promise.all([
+      fetchFeed(`${NEWS_QUERY} when:4d`),
+      fetchFeed(`${EVENTS_QUERY} when:7d`).catch(() => []),
+    ]);
+    newsCache = { at: Date.now(), items: mergeHeadlines(general, events) };
     return newsCache.items;
   } catch {
     return newsCache?.items ?? [];

@@ -1,4 +1,4 @@
-import type { NewsRead } from "@/lib/decide";
+import { EVENT_FUELS, EVENT_TYPES, type NewsRead } from "@/lib/decide";
 import type { Headline } from "@/lib/signals";
 
 const STAMP = { up: "Sube", down: "Baja", none: "Neutro" } as const;
@@ -44,8 +44,8 @@ export default function Press({ headlines, read }: { headlines: Headline[]; read
             <span>preguntas</span>
           </p>
           <p>
-            <b>1</b>
-            <span>llamada a Jev</span>
+            <b>{call.calls}</b>
+            <span>{call.calls === 1 ? "llamada a Jev" : "llamadas a Jev"}</span>
           </p>
           <p>
             <b>{call.ms.toLocaleString("es-ES")} ms</b>
@@ -65,7 +65,10 @@ export default function Press({ headlines, read }: { headlines: Headline[]; read
       {read ? (
         <p className="press-lede">
           En conjunto, los titulares apuntan a <b>{OUTLOOK[read.outlook]}</b> ({pct(read.probabilities[read.outlook] ?? 0)})
-          {read.deadline >= 0.6 ? " y alguno anuncia una fecha a partir de la cual subirá." : "."} Así ha leído Jev cada uno:
+          {read.events.some((e) => e.date && e.confidence >= 0.5)
+            ? `, y ${read.events.filter((e) => e.date && e.confidence >= 0.5).length === 1 ? "hay un aviso" : "hay avisos"} con fecha.`
+            : ", pero ninguno anuncia un cambio con fecha."}{" "}
+          Así ha leído Jev cada uno:
         </p>
       ) : (
         <p className="press-lede">Jev no está disponible ahora mismo: estos son los titulares, sin sellar.</p>
@@ -74,6 +77,7 @@ export default function Press({ headlines, read }: { headlines: Headline[]; read
       <ol className="clips">
         {headlines.map((h, i) => {
           const r = read?.headlines?.[i];
+          const ev = read?.events.find((e) => e.headlines.includes(i) && e.confidence >= 0.35);
           return (
             <li key={i} className={`clip ${r && r.spain < 0.5 ? "off" : ""}`}>
               {r && (
@@ -93,9 +97,15 @@ export default function Press({ headlines, read }: { headlines: Headline[]; read
               ) : (
                 <p className="clip-title">{h.title}</p>
               )}
-              {r && (r.date >= 0.5 || r.spain < 0.5) && (
+              {r && (ev || r.spain < 0.5) && (
                 <p className="clip-tags">
-                  {r.date >= 0.5 && <span className="tag tag-date">Anuncia una fecha · {pct(r.date)}</span>}
+                  {ev && (
+                    <span className="tag tag-date">
+                      Aviso: {EVENT_TYPES[ev.type].toLowerCase()}
+                      {ev.fuels !== "both" ? ` (${EVENT_FUELS[ev.fuels]})` : ""}
+                      {ev.date ? ` · ${ev.date.split("-").reverse().slice(0, 2).join("/")}` : " · sin fecha"} · {pct(ev.confidence)}
+                    </span>
+                  )}
                   {r.spain < 0.5 && <span className="tag tag-off">No va del surtidor español · {pct(1 - r.spain)}</span>}
                 </p>
               )}
@@ -106,8 +116,9 @@ export default function Press({ headlines, read }: { headlines: Headline[]; read
 
       <p className="press-note">
         Jev no escribe ni resume: responde a preguntas cerradas con una probabilidad. Los sellos son sus respuestas tal cual, sin
-        retocar. Tres preguntas por titular (¿sube o baja?, ¿va de España?, ¿anuncia una fecha?) y cuatro sobre el conjunto, todas
-        en una sola llamada al modelo {read?.model ?? "Jev"}.
+        retocar. Primero, tres preguntas por titular (¿sube o baja?, ¿va de España?, ¿anuncia un cambio con fecha?). Después,
+        solo con los que anuncian algo: qué tipo de cambio es, si encarece o abarata y cuándo entra en vigor, eligiendo entre las
+        fechas que encuentra el código en el titular. Modelo: {read?.model ?? "Jev"}.
       </p>
     </section>
   );

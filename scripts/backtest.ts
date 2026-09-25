@@ -2,18 +2,20 @@
 //
 //   npx tsx --env-file=.env.local scripts/backtest.ts [días=60]
 //
-// Para cada día D, zona (7 ciudades) y combustible (95 y diésel), la web decide a las
-// 9:00 con lo que se sabía entonces: tendencias con precios hasta D, Brent hasta D,
-// titulares publicados antes de las 9:00 de D (Google News por fechas) leídos por Jev.
-// El resultado es el precio de las mismas gasolineras en D+3 (histórico del Ministerio).
-// Se compara con estrategias tontas: llenar siempre, esperar siempre.
+// Cada día D, a las 9:00, la web lee los titulares publicados hasta entonces (Google News
+// por fechas: generales de 4 días + eventos de 7 días) con Jev y decide:
+//   "Llena antes del X" / "Espera al X" si hay un cambio anunciado con fecha, o "Hoy da igual".
+// Se comprueba con el precio de las gasolineras de 7 ciudades (95 y diésel) en el histórico
+// del Ministerio: el aviso, el día después de X; "da igual", a los 3 días.
 // Todo se guarda en .data/backtest para no repetir descargas ni llamadas a Jev.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { combine, readNews, W, type NewsRead, type Trend, type Verdict, type Weights } from "../lib/decide";
+import { dateLabel } from "../lib/dates";
+import { EVENT_TYPES, readNews, verdictFromNews, type NewsRead, type Verdict } from "../lib/decide";
 import { distanceKm, getCurrentStations, getHistory, madridDate, median, type FuelId } from "../lib/minetur";
-import { fetchFeed, MAX_HEADLINES, NEWS_QUERY, type Brent, type Headline } from "../lib/signals";
+import { EVENTS_QUERY, fetchFeed, mergeHeadlines, NEWS_QUERY, type Headline } from "../lib/signals";
+import { judge, targetDate } from "../lib/track";
 
 const DAYS = Number(process.argv[2] ?? 60);
 const HORIZON = 3;
@@ -29,13 +31,13 @@ const CITIES = [
 ];
 const FUELS: FuelId[] = ["g95", "diesel"];
 
-// ---------- fechas ----------
 const addDays = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const apiDate = (iso: string) => iso.split("-").reverse().join("-");
-const weekday = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
 const decisionTime = (iso: string) => Date.parse(`${iso}T07:00:00Z`); // 9:00 en Madrid (verano)
+const pct = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1).replace(".", ",")} %`;
+const share = (x: number) => `${(x * 100).toFixed(1).replace(".", ",")} %`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ---------- caché en disco ----------
 async function cached<T>(name: string, make: () => Promise<T>): Promise<T> {
   const file = path.join(DIR, name);
   try {
@@ -53,24 +55,13 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
   await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) await fn(items[i++]); }));
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// ---------- juicio (igual que el registro de aciertos) ----------
-type Outcome = { ok: boolean | null; cost: number }; // cost: € extra en 40 L frente a llenar hoy
-function judge(verdict: Verdict, change: number, p0: number): Outcome {
-  const move = p0 * change * 40; // lo que cambia llenar 40 L en D+3 frente a hoy
-  const cost = verdict === "today" ? 0 : verdict === "wait" ? move : move / 2; // "lo justo": medio hoy, medio luego
-  if (verdict === "partial") return { ok: null, cost };
-  if (Math.abs(change) < 0.001) return { ok: null, cost }; // empate: el precio no se movió
-  return { ok: verdict === "today" ? change > 0 : change < 0, cost };
-}
-
 async function main() {
   const today = madridDate(0).iso;
+  const yesterday = addDays(today, -1);
   const lastD = addDays(today, -(HORIZON + 1));
   const firstD = addDays(lastD, -(DAYS - 1));
   const days = Array.from({ length: DAYS }, (_, i) => addDays(firstD, i));
-  console.log(`Días: ${firstD} → ${lastD} (${DAYS}) · resultado a ${HORIZON} días · Jev: ${process.env.TYPESAFE_API_KEY ? "sí" : "NO"}`);
+  console.log(`Días: ${firstD} → ${lastD} (${DAYS}) · Jev: ${process.env.TYPESAFE_API_KEY ? "sí" : "NO"}`);
 
   // 1) Zonas: las gasolineras de hoy alrededor de cada ciudad (como en la web).
   const { stations } = await getCurrentStations();
@@ -86,12 +77,12 @@ async function main() {
     }),
   );
 
-  // 2) Histórico del Ministerio: de D-30 a D+3, solo las gasolineras de las zonas.
+  // 2) Histórico del Ministerio, de D hasta ayer (los avisos se comprueban en su fecha).
   const wanted = new Set(zones.flatMap((z) => z.ids));
   const provinces = [...new Set(zones.flatMap((z) => z.provinces))];
-  const dates = Array.from({ length: DAYS + 30 + HORIZON }, (_, i) => addDays(firstD, i - 30));
-  const hist = new Map<string, Record<string, Record<string, number>>>(); // prov/fecha → id → {g95, diesel}
-  let done = 0;
+  const dates: string[] = [];
+  for (let d = firstD; d <= yesterday; d = addDays(d, 1)) dates.push(d);
+  const hist = new Map<string, Record<string, Record<string, number>>>();
   await pool(provinces.flatMap((p) => dates.map((d) => [p, d] as const)), 4, async ([p, d]) => {
     const data = await cached(`hist/${p}_${d}.json`, async () => {
       const m = await getHistory(p, apiDate(d));
@@ -100,7 +91,6 @@ async function main() {
       return out;
     }).catch(() => ({}));
     hist.set(`${p}/${d}`, data);
-    if (++done % 100 === 0) console.log(`  histórico ${done}/${provinces.length * dates.length}`);
   });
   const priceAt = (z: (typeof zones)[number], id: string, d: string) => {
     for (const p of z.provinces) {
@@ -119,114 +109,73 @@ async function main() {
     return ch.length >= 2 ? median(ch) : undefined;
   };
 
-  // 3) Brent: cierres diarios de Yahoo, solo los anteriores a la hora de decidir.
-  const closes = await cached("brent.json", async () => {
-    const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/BZ=F?range=1y&interval=1d", { headers: { "User-Agent": "Mozilla/5.0" } });
-    const j = await r.json();
-    const res = j.chart.result[0];
-    return (res.timestamp as number[]).map((t, i) => [t * 1000, res.indicators.quote[0].close[i]] as [number, number | null]).filter((x): x is [number, number] => x[1] != null);
-  });
-  const brentAt = (d: string): Brent | null => {
-    const upTo = closes.filter(([t]) => t < decisionTime(d));
-    if (upTo.length < 25) return null;
-    const [lt, last] = upTo[upTo.length - 1];
-    const near = (days: number) => upTo.reduce((b, p) => (Math.abs(p[0] - (lt - days * 86_400_000)) < Math.abs(b[0] - (lt - days * 86_400_000)) ? p : b))[1];
-    return { last, change7d: last / near(7) - 1, change30d: last / near(30) - 1 };
-  };
-
-  // 4) Titulares antes de las 9:00 de cada día, y lo que Jev lee en ellos.
-  const news = new Map<string, { headlines: Headline[]; read: NewsRead | null }>();
+  // 3) Titulares de cada día (antes de las 9:00) y lo que lee Jev.
+  const reads = new Map<string, { headlines: Headline[]; read: NewsRead | null }>();
   for (const d of days) {
-    const headlines = await cached(`news/${d}.json`, async () => {
-      await sleep(1200); // con calma con Google News
+    const general = await cached(`news/${d}.json`, async () => {
+      await sleep(1200);
       const items = await fetchFeed(`${NEWS_QUERY} after:${addDays(d, -4)} before:${addDays(d, 1)}`);
-      return items.filter((h) => Date.parse(h.date) < decisionTime(d)).slice(0, MAX_HEADLINES);
+      return items.filter((h) => Date.parse(h.date) < decisionTime(d)).slice(0, 12);
     });
+    const events = await cached(`news-events/${d}.json`, async () => {
+      await sleep(1200);
+      const items = await fetchFeed(`${EVENTS_QUERY} after:${addDays(d, -7)} before:${addDays(d, 1)}`);
+      return items.filter((h) => Date.parse(h.date) < decisionTime(d));
+    });
+    const headlines = mergeHeadlines(general, events);
     const read = process.env.TYPESAFE_API_KEY && headlines.length
-      ? await cached(`jev/${d}.json`, () => readNews(headlines)).catch((e) => (console.log(`  Jev ${d}: ${e.message}`), null))
+      ? await cached(`jev-events-v5/${d}.json`, () => readNews(headlines)).catch((e) => (console.log(`  Jev ${d}: ${e.message}`), null))
       : null;
-    news.set(d, { headlines, read });
+    reads.set(d, { headlines, read });
   }
-  console.log(`Titulares: media ${(days.reduce((s, d) => s + news.get(d)!.headlines.length, 0) / days.length).toFixed(1)} por día · leídos por Jev: ${days.filter((d) => news.get(d)!.read).length}/${days.length}`);
+  const read = days.filter((d) => reads.get(d)!.read).length;
+  console.log(`Titulares: media ${(days.reduce((s, d) => s + reads.get(d)!.headlines.length, 0) / days.length).toFixed(1)} por día · leídos por Jev: ${read}/${days.length}`);
 
-  // 5) Decidir cada día y comparar con lo que pasó.
-  const halfNews: Weights = { ...W, news: W.news / 2, deadline: W.deadline / 2, warning: W.warning / 2, relief: W.relief / 2 };
-  const strategies = {
-    web: "La web (Jev + precios)",
-    webHalf: "La web con noticias a la mitad",
-    noJev: "Solo precios (sin Jev)",
-    jevOnly: "Solo Jev (titulares)",
-    always: "Llenar siempre",
-    never: "Esperar siempre",
-  } as const;
-  type S = keyof typeof strategies;
-  const rows: { city: string; fuel: string; date: string; change: number; p0: number; verdicts: Record<S, Verdict> }[] = [];
-
-  for (const z of zones) {
-    for (const d of days) {
-      const out = change(z, d, addDays(d, HORIZON));
-      if (out == null) continue;
-      const trend: Trend = { d1: change(z, addDays(d, -1), d), d3: change(z, addDays(d, -3), d), d7: change(z, addDays(d, -7), d), d30: change(z, addDays(d, -30), d) };
-      const p0 = median(z.ids.map((id) => priceAt(z, id, d)).filter((v): v is number => !!v))!;
-      const n = news.get(d)!;
-      const input = { fuel: z.fuel, tank: "cuarto" as const, trend, brent: brentAt(d), weekday: weekday(d), headlines: n.headlines };
-      const web = n.read ? combine(input, n.read).verdict : combine(input).verdict;
-      rows.push({
-        city: z.city,
-        fuel: z.fuel,
-        date: d,
-        change: out,
-        p0,
-        verdicts: {
-          web,
-          webHalf: n.read ? combine(input, n.read, undefined, halfNews).verdict : web,
-          noJev: combine(input).verdict,
-          jevOnly: !n.read ? "partial" : n.read.outlook === "rise" ? "today" : n.read.outlook === "fall" ? "wait" : "partial",
-          always: "today",
-          never: "wait",
-        },
-      });
+  // 4) Veredicto de cada día (es nacional: sale de las noticias) y resultado en cada zona.
+  type Row = { date: string; zone: string; verdict: Verdict; eventDate?: string; target: string; change?: number; ok?: boolean | null };
+  const rows: Row[] = [];
+  const perDay = days.flatMap((d) => FUELS.map((fuel) => {
+    const { headlines, read } = reads.get(d)!;
+    const decision = verdictFromNews({ fuel, tank: "cuarto", trend: {}, brent: null, today: d, headlines }, read ?? undefined);
+    const event = decision.event;
+    const pred = { date: d, verdict: decision.market, event: event ? { date: event.date!, direction: event.direction, type: event.type } : undefined };
+    const target = targetDate(pred);
+    for (const z of zones.filter((z) => z.fuel === fuel)) {
+      const ch = target <= yesterday ? change(z, d, target) : undefined;
+      const p0 = median(z.ids.map((id) => priceAt(z, id, d)).filter((v): v is number => !!v)) ?? 0;
+      const j = ch != null ? judge(decision.market, ch, p0) : undefined;
+      rows.push({ date: d, zone: `${z.city}/${z.fuel}`, verdict: decision.market, eventDate: event?.date ?? undefined, target, change: ch, ok: j?.ok });
     }
+    return { date: d, fuel, decision, headlines };
+  }));
+
+  // 5) Resultados
+  const alertDays = perDay.filter((x) => x.decision.market !== "any");
+  const anyRows = rows.filter((r) => r.verdict === "any" && r.ok != null);
+  const alertRows = rows.filter((r) => r.verdict !== "any" && r.ok != null);
+  const allWindows = days.flatMap((d) => zones.map((z) => change(z, d, addDays(d, HORIZON)))).filter((c): c is number => c != null);
+
+  console.log(`\nVeredictos (día × combustible): ${perDay.length - alertDays.length} «Hoy da igual» · ${alertDays.length} con aviso.`);
+  console.log(`\n«Hoy da igual» → el precio se movió menos de un 1 % en 3 días en ${share(anyRows.filter((r) => r.ok).length / anyRows.length)} de los casos (${anyRows.length}).`);
+  console.log(`   Referencia, todos los días: ${share(allWindows.filter((c) => Math.abs(c) < 0.01).length / allWindows.length)} · movimiento medio ${pct(allWindows.reduce((a, c) => a + Math.abs(c), 0) / allWindows.length)}`);
+  if (alertRows.length)
+    console.log(`\nAvisos → se cumplieron en ${share(alertRows.filter((r) => r.ok).length / alertRows.length)} de las zonas (${alertRows.length} comprobaciones).`);
+
+  console.log("\nDías con aviso:");
+  for (const x of alertDays) {
+    const e = x.decision.event!;
+    const rs = rows.filter((r) => r.date === x.date && r.zone.endsWith(`/${x.fuel}`) && r.ok != null);
+    const outcome = rs.length ? `${rs.filter((r) => r.ok).length}/${rs.length} zonas ✓ · cambio mediano ${pct(median(rs.map((r) => r.change!))!)}` : "pendiente (la fecha aún no ha llegado)";
+    console.log(`  ${x.date} ${x.fuel.padEnd(6)} → ${x.decision.market === "today" ? "Llena antes del" : "Espera al"} ${dateLabel(e.date!)} · ${EVENT_TYPES[e.type]} · ${Math.round(e.confidence * 100)} % · ${outcome}`);
+    for (const i of e.headlines.slice(0, 2)) console.log(`       «${x.headlines[i].title.slice(0, 110)}»`);
   }
 
-  // 6) Resultados
-  const up = rows.filter((r) => r.change >= 0.001).length;
-  const down = rows.filter((r) => r.change <= -0.001).length;
-  console.log(`\n${rows.length} decisiones (${zones.length} zonas × ${days.length} días).`);
-  console.log(`Qué hizo el precio a 3 días: sube ${pct(up / rows.length)} · baja ${pct(down / rows.length)} · igual ${pct(1 - (up + down) / rows.length)}\n`);
+  const calls = perDay.filter((x) => x.fuel === FUELS[0]).map((x) => x.decision.news?.call).filter((c) => !!c);
+  if (calls.length)
+    console.log(`\nJev: ${calls.length} días leídos · ${Math.round(calls.reduce((a, c) => a + c!.questions, 0) / calls.length)} preguntas por día · ${Math.round(calls.reduce((a, c) => a + c!.ms, 0) / calls.length)} ms · coste total ${calls.reduce((a, c) => a + c!.costUsd, 0).toFixed(4)} $`);
 
-  const summary = (Object.keys(strategies) as S[]).map((s) => {
-    const res = rows.map((r) => judge(r.verdicts[s], r.change, r.p0));
-    const decided = res.filter((x) => x.ok != null);
-    const hits = decided.filter((x) => x.ok).length;
-    const committed = rows.filter((r) => r.verdicts[s] !== "partial").length;
-    const avgCost = res.reduce((a, x) => a + x.cost, 0) / res.length;
-    return { strategy: strategies[s], key: s, committed: committed / rows.length, hits, decided: decided.length, rate: decided.length ? hits / decided.length : null, avgCost };
-  });
-  const oracle = rows.reduce((a, r) => a + Math.min(0, r.p0 * r.change * 40), 0) / rows.length;
-
-  console.log("Estrategia                        Se moja   Aciertos        € por depósito vs llenar siempre");
-  for (const s of summary)
-    console.log(
-      `${s.strategy.padEnd(34)}${pct(s.committed).padStart(6)}   ${s.rate == null ? "  —   " : pct(s.rate).padStart(6)} (${s.hits}/${s.decided})`.padEnd(62) +
-        `${(-s.avgCost >= 0 ? "+" : "") + (-s.avgCost).toFixed(3)} €`,
-    );
-  console.log(`${"Adivino perfecto (techo)".padEnd(62)}${(-oracle >= 0 ? "+" : "") + (-oracle).toFixed(3)} €`);
-
-  // Jev por separado: ¿lo que lee en los titulares anticipa el precio?
-  const jevRows = rows.filter((r) => news.get(r.date)!.read);
-  const byOutlook: Record<string, number[]> = {};
-  for (const r of jevRows) (byOutlook[news.get(r.date)!.read!.outlook] ??= []).push(r.change);
-  console.log("\nLo que Jev lee en los titulares → qué hizo después el precio (mediana a 3 días):");
-  for (const [o, ch] of Object.entries(byOutlook))
-    console.log(`  ${o.padEnd(8)} ${String(ch.length).padStart(4)} decisiones · mediana ${pct(median(ch)!)} · sube en ${pct(ch.filter((c) => c >= 0.001).length / ch.length)}`);
-
-  await writeFile(path.join(DIR, "result.json"), JSON.stringify({ firstD, lastD, rows, summary, oracle, news: Object.fromEntries(news) }, null, 1));
-  console.log(`\nDetalle en ${path.relative(process.cwd(), path.join(DIR, "result.json"))}`);
-}
-
-function pct(x: number) {
-  return `${(x * 100).toFixed(1).replace(".", ",")} %`;
+  await writeFile(path.join(DIR, "result-events.json"), JSON.stringify({ firstD, lastD, perDay, rows }, null, 1));
+  console.log(`\nDetalle en .data/backtest/result-events.json`);
 }
 
 main().catch((e) => {
