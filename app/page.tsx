@@ -2,33 +2,32 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
-import Trend from "@/components/Trend";
+import FuelGauge, { type TankId } from "@/components/FuelGauge";
+import Pump, { GRADES } from "@/components/Pump";
+import Receipt from "@/components/Receipt";
+import Reels from "@/components/Reels";
+import Starburst from "@/components/Starburst";
 import { FUELS, type FuelId } from "@/lib/minetur";
-import type { Analysis, StationResult } from "@/lib/types";
+import type { Analysis } from "@/lib/types";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), {
   ssr: false,
   loading: () => <div className="map map-loading" />,
 });
 
-const TANKS = [
-  ["reserva", "En reserva"],
-  ["cuarto", "1/4"],
-  ["medio", "Medio"],
-  ["lleno", "3/4 o más"],
-] as const;
-type TankId = (typeof TANKS)[number][0];
-
 type Place = { lat: number; lon: number; label: string };
 
-const VERDICT = {
-  today: { word: "Hoy", sub: "Echa hoy. Lo más probable es que mañana esté más cara." },
-  partial: { word: "Lo justo", sub: "La cosa no está clara: echa para unos días y vuelve a mirar." },
-  wait: { word: "Espera", sub: "Aguanta: todo apunta a que bajará en los próximos días." },
+const SIGN = {
+  today: { title: "Llena hoy", sub: "Lo más probable es que en los próximos días esté más cara." },
+  partial: { title: "Echa lo justo", sub: "La cosa no está clara: pon para unos días y vuelve a mirar." },
+  wait: { title: "Espera", sub: "Todo apunta a que bajará en los próximos días." },
 } as const;
+const ODDS = [
+  ["today", "Hoy"],
+  ["partial", "Lo justo"],
+  ["wait", "Espera"],
+] as const;
 
-const eur3 = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-const eur2 = (n: number) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const km = (n: number) => (n < 1 ? `${Math.round(n * 1000)} m` : `${n.toLocaleString("es-ES", { maximumFractionDigits: 1 })} km`);
 const pctTxt = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
 
@@ -90,7 +89,7 @@ export default function Home() {
     save("tank", tank);
     save("liters", liters);
     save("place", place);
-    const id = setTimeout(() => analyze(place, fuel, tank, liters), 250);
+    const id = setTimeout(() => analyze(place, fuel, tank, liters), 300);
     return () => clearTimeout(id);
   }, [ready, place, fuel, tank, liters, analyze]);
 
@@ -127,277 +126,247 @@ export default function Home() {
 
   const d = data?.decision;
   const best = data?.stations[0];
-  const selStation = data?.stations.find((s) => s.id === selected) ?? best;
+  const station = data?.stations.find((s) => s.id === selected) ?? best;
+  const grade = (data?.fuel ?? fuel) as FuelId;
+  const saving = data && station ? (data.stats.localMedian - station.price) * data.liters : undefined;
 
   return (
-    <main className="wrap">
-      <header className="top">
-        <div className="brand">
-          <svg viewBox="0 0 64 64" aria-hidden className="logo">
-            <path d="M20 50V16a4 4 0 0 1 4-4h14a4 4 0 0 1 4 4v34" />
-            <path d="M16 50h30" />
-            <rect x="25" y="18" width="12" height="9" rx="1.5" />
-            <path d="M42 24l6 5v14a3 3 0 0 0 6 0V26l-5-5" />
-          </svg>
-          <span>
-            jev<b>solinera</b>
-          </span>
+    <>
+      <header className="canopy">
+        <div className="canopy-inner">
+          <a className="brand" href="/" aria-label="jevsolinera, inicio">
+            <Starburst />
+            <span className="brand-text">
+              <span className="brand-script">jevsolinera</span>
+              <span className="brand-sub">Estación de servicio · Est. 2026</span>
+            </span>
+          </a>
+          <p className="canopy-right">
+            <b>¿Echo hoy o espero?</b>
+            <span>{data ? `Precios oficiales · ${data.updated.slice(0, 16)}` : "Precios oficiales del Ministerio"}</span>
+          </p>
         </div>
-        <p className="tagline">¿Echo hoy o espero? ¿Y dónde?</p>
       </header>
 
-      <section className="panel controls" aria-label="Tus datos">
-        <div className="where">
-          <button className="btn btn-primary" onClick={locate} type="button">
-            <svg viewBox="0 0 24 24" aria-hidden>
-              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-              <circle cx="12" cy="12" r="6" />
-              <circle cx="12" cy="12" r="2" className="fill" />
-            </svg>
-            Usar mi ubicación
-          </button>
-          <form onSubmit={search} className="search">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="o escribe ciudad, calle o CP"
-              aria-label="Buscar ubicación"
-            />
-            <button className="btn" type="submit">
-              Buscar
-            </button>
-          </form>
-        </div>
-        {place && (
-          <p className="here">
-            <span className="dot" /> {place.label}
-          </p>
-        )}
-
-        <div className="field">
-          <span className="label">Combustible</span>
-          <div className="seg" role="radiogroup">
-            {(Object.keys(FUELS) as FuelId[]).map((f) => (
-              <button key={f} role="radio" aria-checked={fuel === f} className={fuel === f ? "on" : ""} onClick={() => setFuel(f)} type="button">
-                {FUELS[f].label}
+      <main className="wrap">
+        <section className="service" aria-label="Tus datos">
+          <div className="svc-where">
+            <p className="svc-label">
+              <span>01</span> ¿Dónde estás?
+            </p>
+            <div className="where">
+              <button className="btn btn-red" onClick={locate} type="button">
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                  <circle cx="12" cy="12" r="6" />
+                  <circle cx="12" cy="12" r="2" className="fill" />
+                </svg>
+                Usar mi ubicación
               </button>
-            ))}
+              <form onSubmit={search} className="search">
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="o escribe ciudad, calle o CP" aria-label="Buscar ubicación" />
+                <button className="btn btn-ghost" type="submit">
+                  Buscar
+                </button>
+              </form>
+            </div>
+            {place && (
+              <p className="here">
+                <span className="dot" /> {place.label}
+              </p>
+            )}
           </div>
-        </div>
 
-        <div className="row2">
-          <div className="field">
-            <span className="label">¿Cómo vas de depósito?</span>
-            <div className="seg" role="radiogroup">
-              {TANKS.map(([id, label]) => (
-                <button key={id} role="radio" aria-checked={tank === id} className={tank === id ? "on" : ""} onClick={() => setTank(id)} type="button">
-                  {label}
+          <div className="svc-fuel">
+            <p className="svc-label">
+              <span>02</span> ¿Qué le ponemos?
+            </p>
+            <div className="grades" role="radiogroup" aria-label="Combustible">
+              {(Object.keys(FUELS) as FuelId[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={fuel === f}
+                  aria-label={FUELS[f].label}
+                  className={`grade ${fuel === f ? "on" : ""} ${GRADES[f].big.length > 3 ? "long" : ""}`}
+                  style={{ "--g": GRADES[f].color } as React.CSSProperties}
+                  onClick={() => setFuel(f)}
+                >
+                  <b>{GRADES[f].big}</b>
+                  <span>{GRADES[f].small}</span>
                 </button>
               ))}
             </div>
           </div>
-          <label className="field liters">
-            <span className="label">Litros a echar</span>
-            <input type="number" min={5} max={120} step={5} value={liters} onChange={(e) => setLiters(Math.max(5, Math.min(120, Number(e.target.value) || 40)))} />
-          </label>
-        </div>
-      </section>
 
-      {error && <p className="error" role="alert">{error}</p>}
-
-      {!place && !loading && ready && (
-        <section className="empty">
-          <h1>Los precios cambian cada día.<br />Tú decides cuándo.</h1>
-          <p>
-            Miramos los precios oficiales de las gasolineras cerca de ti, cómo han ido este mes, el petróleo y las noticias.
-            Jev, un modelo de IA hecho para tomar decisiones, te dice si te compensa repostar hoy o esperar.
-          </p>
-        </section>
-      )}
-
-      {loading && !data && (
-        <section className="loading" aria-live="polite">
-          <div className="pump-anim" />
-          {loading}
-        </section>
-      )}
-
-      {data && d && best && (
-        <div className={`results ${loading ? "stale" : ""}`} aria-busy={!!loading}>
-          <section className={`panel verdict v-${d.verdict}`} aria-live="polite">
-            <p className="q">¿Echo {FUELS[data.fuel].label.toLowerCase()} hoy?</p>
-            <h2 className="word">{VERDICT[d.verdict].word}</h2>
-            <p className="sub">{d.overridden ?? VERDICT[d.verdict].sub}</p>
-
-            <div className="probs" aria-label="Probabilidades de Jev">
-              {(["today", "partial", "wait"] as const).map((k) => (
-                <div key={k} className={`p p-${k}`} style={{ flexGrow: Math.max(d.probabilities[k], 0.02) }} title={`${VERDICT[k].word}: ${Math.round(d.probabilities[k] * 100)} %`} />
-              ))}
-            </div>
-            <div className="prob-legend">
-              {(["today", "partial", "wait"] as const).map((k) => (
-                <span key={k}>
-                  <i className={`sw p-${k}`} />
-                  {VERDICT[k].word} <b>{Math.round(d.probabilities[k] * 100)} %</b>
-                </span>
-              ))}
-            </div>
-            <p className="meta">
-              {d.source === "jev" ? (
-                <>
-                  Noticias leídas por <b>Jev</b> ({d.model}) + tendencias de precios · seguridad {Math.round(d.confidence * 100)} %
-                </>
-              ) : (
-                <>Estimación básica sin Jev{d.error ? ` (${d.error})` : ""}</>
-              )}
+          <div className="svc-tank">
+            <p className="svc-label">
+              <span>03</span> ¿Cómo vas de depósito?
             </p>
-          </section>
+            <FuelGauge value={tank} onChange={setTank} />
+          </div>
 
-          <section className="panel best">
-            <p className="kicker">{selStation?.id === best.id ? "Dónde te sale más a cuenta" : "Gasolinera seleccionada"}</p>
-            {selStation && <StationCard s={selStation} data={data} isBest={selStation.id === best.id} />}
-          </section>
+          <div className="svc-liters">
+            <p className="svc-label">
+              <span>04</span> ¿Cuántos litros?
+            </p>
+            <div className="stepper">
+              <button type="button" aria-label="Menos litros" onClick={() => setLiters((l) => Math.max(5, l - 5))}>
+                −
+              </button>
+              <Reels text={String(liters).padStart(3, "0")} className="small" />
+              <button type="button" aria-label="Más litros" onClick={() => setLiters((l) => Math.min(120, l + 5))}>
+                +
+              </button>
+            </div>
+            <p className="svc-hint">litros</p>
+          </div>
+        </section>
 
-          <section className="panel mapbox">
-            <StationMap center={place!} stations={data.stations} selectedId={selected} onSelect={setSelected} />
-          </section>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
 
-          <section className="panel list">
-            <h3>
-              Cerca de ti <small>({data.stations.length} en {data.radiusKm} km, ordenadas por lo que te cuesta llegar y llenar)</small>
-            </h3>
-            <ol>
-              {data.stations.slice(0, 15).map((s, i) => (
-                <li key={s.id} className={s.id === selStation?.id ? "sel" : ""}>
-                  <button type="button" onClick={() => setSelected(s.id)}>
-                    <span className="rank">{i + 1}</span>
-                    <span className="nm">
-                      <b>{s.name}</b>
-                      <small>
-                        {s.address} · {km(s.distanceKm)}
-                      </small>
-                    </span>
-                    <span className="pr">
-                      {eur3(s.price)}
-                      {s.change7d != null && Math.abs(s.change7d) >= 0.001 && (
-                        <small className={s.change7d > 0 ? "up" : "down"}>
-                          {s.change7d > 0 ? "▲" : "▼"} {pctTxt(s.change7d)} 7d
-                        </small>
-                      )}
-                    </span>
+        <div className={`stage ${loading && data ? "stale" : ""}`} aria-busy={!!loading}>
+          <div className="col-pump">
+            <Pump grade={grade} liters={data?.liters ?? liters} verdict={d?.verdict} station={station} isBest={station?.id === best?.id} saving={saving} busy={!!loading} />
+          </div>
+
+          <div className="col-side">
+            {d && data ? (
+              <section className={`sign v-${d.verdict}`} aria-live="polite">
+                <span className="bolt tl" />
+                <span className="bolt tr" />
+                <span className="bolt bl" />
+                <span className="bolt br" />
+                <p className="sign-kicker">
+                  La decisión de hoy · {FUELS[data.fuel].label}
+                </p>
+                <h1 className="sign-title">{SIGN[d.verdict].title}</h1>
+                <p className="sign-sub">{d.overridden ?? SIGN[d.verdict].sub}</p>
+                <div className="odds" aria-label="Probabilidades">
+                  <div className="odds-bar">
+                    {ODDS.map(([k]) => (
+                      <i key={k} className={`o-${k}`} style={{ flexGrow: Math.max(d.probabilities[k], 0.015) }} />
+                    ))}
+                  </div>
+                  <div className="odds-legend">
+                    {ODDS.map(([k, label]) => (
+                      <span key={k} className={d.verdict === k ? "win" : ""}>
+                        <i className={`o-${k}`} />
+                        {label} <b>{Math.round(d.probabilities[k] * 100)} %</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <p className="sign-meta">
+                  {d.source === "jev" ? (
+                    <>
+                      Noticias leídas por <b>Jev</b> ({d.model}) + tendencias de precios · seguridad {Math.round(d.confidence * 100)} %
+                    </>
+                  ) : (
+                    <>Estimación básica sin Jev{d.error ? ` (${d.error})` : ""}</>
+                  )}
+                </p>
+              </section>
+            ) : (
+              <section className="poster">
+                <Starburst className="poster-star" />
+                <p className="poster-kicker">Servicio completo · Precios oficiales · Decisión con IA</p>
+                <h1 className="poster-title">
+                  ¿Lleno hoy
+                  <br />o mañana?
+                </h1>
+                <p className="poster-body">
+                  Miramos los precios oficiales de las gasolineras cerca de ti, cómo han ido este mes, el petróleo y las noticias. Jev,
+                  un modelo de IA hecho para decidir, te dice si te compensa repostar hoy o esperar.
+                </p>
+                {!loading && (
+                  <button className="btn btn-red" type="button" onClick={locate}>
+                    Empezar con mi ubicación
                   </button>
-                </li>
-              ))}
-            </ol>
-          </section>
-
-          <section className="panel why">
-            <h3>Por qué</h3>
-            <Trend series={data.stats.series} province={data.province} />
-            <Factors factors={d.factors} />
-            <ul className="reasons">
-              {d.reasons.map((r, i) => (
-                <li key={i} className={`r-${r.kind}`}>
-                  <span className="ic" aria-hidden>
-                    {{ up: "▲", down: "▼", flat: "▬", calendar: "◷", news: "❝", tank: "◧", oil: "◆" }[r.kind]}
-                  </span>
-                  {r.text}
-                </li>
-              ))}
-            </ul>
-            {data.headlines.length > 0 && (
-              <details className="news">
-                <summary>{d.source === "jev" ? "Titulares que ha leído Jev" : "Titulares recientes"} ({Math.min(data.headlines.length, 12)})</summary>
-                <ul>
-                  {data.headlines.slice(0, 12).map((h, i) => (
-                    <li key={i}>
-                      {h.title} <small>{h.source}</small>
-                    </li>
-                  ))}
-                </ul>
-              </details>
+                )}
+                {loading && <p className="poster-loading">{loading}</p>}
+              </section>
             )}
-          </section>
+
+            {data && place && (
+              <section className="roadmap">
+                <header className="roadmap-cover">
+                  <Starburst />
+                  <span>Mapa de carreteras</span>
+                  <small>{place.label} · radio {data.radiusKm} km</small>
+                </header>
+                <div className="roadmap-sheet">
+                  <StationMap center={place} stations={data.stations} selectedId={station?.id} onSelect={setSelected} />
+                  <span className="folds" aria-hidden />
+                </div>
+              </section>
+            )}
+          </div>
+
+          {data && station && (
+            <section className="board" aria-label="Gasolineras cercanas">
+              <header className="board-head">
+                <span className="board-title">Precios de la zona</span>
+                <small>
+                  {data.stations.length} gasolineras · ordenadas por lo que cuesta llegar y llenar
+                </small>
+              </header>
+              <ol>
+                {data.stations.slice(0, 12).map((s, i) => (
+                  <li key={s.id} className={s.id === station.id ? "sel" : ""}>
+                    <button type="button" onClick={() => setSelected(s.id)}>
+                      <span className="b-rank">{i + 1}</span>
+                      <span className="b-name">
+                        <b>{s.name}</b>
+                        <small>
+                          {s.address} · {km(s.distanceKm)}
+                        </small>
+                      </span>
+                      <span className="b-price">
+                        <span className="slats">
+                          {[...s.price.toFixed(3).replace(".", ",")].map((c, j) => (
+                            <i key={j} className={c === "," ? "sep" : ""}>
+                              {c}
+                            </i>
+                          ))}
+                        </span>
+                        {s.change7d != null && Math.abs(s.change7d) >= 0.001 && (
+                          <small className={s.change7d > 0 ? "up" : "down"}>
+                            {s.change7d > 0 ? "▲" : "▼"} {pctTxt(s.change7d)} 7d
+                          </small>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+
+          {data && <Receipt data={data} tank={tank} />}
         </div>
-      )}
+      </main>
 
       <footer className="foot">
+        <Starburst />
         <p>
           Precios oficiales del{" "}
           <a href="https://geoportalgasolineras.es" target="_blank" rel="noreferrer">
             Ministerio para la Transición Ecológica
           </a>
-          {data && <> · actualizados {data.updated}</>}. Decisión con{" "}
+          . Decisión con{" "}
           <a href="https://typesafe.ai" target="_blank" rel="noreferrer">
             Jev de TypeSafe AI
           </a>
           . Es una predicción, no una garantía.
         </p>
+        <p className="foot-script">Gracias por su visita</p>
       </footer>
-    </main>
-  );
-}
-
-function Factors({ factors }: { factors: Analysis["decision"]["factors"] }) {
-  if (!factors?.length) return null;
-  const max = Math.max(...factors.map((f) => Math.abs(f.value)), 0.004);
-  return (
-    <div className="factors">
-      <div className="factors-head">
-        <span>← espera</span>
-        <b>Qué pesa en la decisión</b>
-        <span>echa hoy →</span>
-      </div>
-      <ul>
-        {factors.map((f) => (
-          <li key={f.key}>
-            <span className="fl">{f.label}</span>
-            <span className="fbar">
-              <i className={f.value > 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(f.value) / max) * 50}%` }} />
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function StationCard({ s, data, isBest }: { s: StationResult; data: Analysis; isBest: boolean }) {
-  const save = (data.stats.localMedian - s.price) * data.liters;
-  const maps = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}`;
-  return (
-    <div className="station">
-      <div className="totem" aria-label={`${eur3(s.price)} euros por litro`}>
-        <span className="fuel">{FUELS[data.fuel].label}</span>
-        <span className="led">
-          {[...eur3(s.price)].map((c, i) => (
-            <i key={i} className={/\d/.test(c) ? "" : "sep"}>
-              {c}
-            </i>
-          ))}
-        </span>
-        <span className="unit">€/L</span>
-      </div>
-      <div className="info">
-        <h3>{s.name}</h3>
-        <p>
-          {s.address}, {s.town}
-        </p>
-        <p className="facts">
-          <span>{km(s.distanceKm)}</span>
-          {s.hours && <span>{s.hours.replace(/;/g, " · ")}</span>}
-        </p>
-        <p className={`saving ${save >= 0 ? "pos" : "neg"}`}>
-          {Math.abs(save) < 0.05
-            ? "Precio en la media de tu zona."
-            : save > 0
-              ? <>Ahorras <b>{eur2(save)}</b> en {data.liters} L frente a la media de tu zona.</>
-              : <>Pagas <b>{eur2(-save)}</b> más que la media de tu zona.{isBest && " Pero está muy cerca."}</>}
-        </p>
-        <a className="btn btn-primary go" href={maps} target="_blank" rel="noreferrer">
-          Cómo llegar →
-        </a>
-      </div>
-    </div>
+    </>
   );
 }
