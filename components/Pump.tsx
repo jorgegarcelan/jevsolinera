@@ -88,6 +88,13 @@ export default function Pump({ grade, liters, verdict, station, isBest, saving, 
                 <span>{km(station.distanceKm)}</span>
                 {station.hours && <span>{station.hours.replace(/;/g, " · ")}</span>}
               </p>
+              {station.open === false ? (
+                <p className="station-open closed">Cerrada ahora{station.opensAt ? ` · abre ${station.opensAt}` : ""}</p>
+              ) : station.closesAt ? (
+                <p className="station-open soon">Abierta · cierra a las {station.closesAt}</p>
+              ) : station.open ? (
+                <p className="station-open">Abierta ahora</p>
+              ) : null}
               {saving != null && (
                 <p className={`station-saving ${saving >= 0 ? "pos" : "neg"}`}>
                   {Math.abs(saving) < 0.05 ? (

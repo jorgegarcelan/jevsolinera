@@ -16,13 +16,18 @@ export interface JevResponse {
   model: string;
   answers: Record<string, Answer>;
   usage: { input_tokens: number; output_tokens: number };
+  /** Añadido por nosotros: milisegundos de la llamada que respondió. */
+  ms: number;
 }
+
+export const PRICE_PER_INPUT_TOKEN_USD = 0.042 / 1e6; // jev-1.13: solo se paga la entrada
 
 export const hasJev = () => !!process.env.TYPESAFE_API_KEY;
 
 export async function askJev(state: Text, questions: Record<string, Question>): Promise<JevResponse> {
   const body = JSON.stringify({ state, questions, model: process.env.JEV_MODEL || "jev-latest" });
   for (let attempt = 0; ; attempt++) {
+    const t0 = performance.now();
     const res = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
       cache: "no-store",
@@ -33,7 +38,7 @@ export async function askJev(state: Text, questions: Record<string, Question>): 
       body,
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) return res.json();
+    if (res.ok) return { ...(await res.json()), ms: Math.round(performance.now() - t0) };
     // 429 / 529: saturado → backoff corto y reintento.
     if ((res.status === 429 || res.status === 529) && attempt < 2) {
       const after = Number(res.headers.get("retry-after")) || 0.6 * 2 ** attempt;

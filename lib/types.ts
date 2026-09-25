@@ -1,8 +1,10 @@
 import type { Decision, Trend } from "./decide";
 import type { FuelId } from "./minetur";
+import type { OpenState } from "./hours";
 import type { Brent, Headline } from "./signals";
+import type { Track } from "./track";
 
-export interface StationResult {
+export interface StationResult extends OpenState {
   id: string;
   name: string;
   address: string;
@@ -34,4 +36,5 @@ export interface Analysis {
   brent: Brent | null;
   headlines: Headline[];
   decision: Decision;
+  track: Track | null;
 }

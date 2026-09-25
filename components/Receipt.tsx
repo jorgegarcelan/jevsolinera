@@ -67,20 +67,7 @@ export default function Receipt({ data, tank }: { data: Analysis; tank: keyof ty
             <li key={i}>{r.text}</li>
           ))}
         </ul>
-        {data.headlines.length > 0 && (
-          <details className="rc-news">
-            <summary>
-              {d.source === "jev" ? "Titulares que ha leído Jev" : "Titulares recientes"} ({Math.min(data.headlines.length, 12)})
-            </summary>
-            <ul>
-              {data.headlines.slice(0, 12).map((h, i) => (
-                <li key={i}>
-                  {h.title} <small>— {h.source}</small>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        {data.headlines.length > 0 && <p className="rc-see">» Titulares y lo que lee Jev en cada uno: en «El Heraldo del Surtidor», más abajo.</p>}
         <hr className="double" />
         <Line k="VEREDICTO" v={WORD[d.verdict]} strong />
         <Line k="Seguridad" v={`${Math.round(d.confidence * 100)} %`} />

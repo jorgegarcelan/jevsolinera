@@ -152,7 +152,7 @@ export function median(xs: number[]) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-/** Fecha en Madrid hace `daysAgo` días: "dd-MM-yyyy" para la API + día de la semana. */
+/** Fecha en Madrid hace `daysAgo` días: "dd-MM-yyyy" para la API, ISO y día de la semana. */
 export function madridDate(daysAgo = 0) {
   const d = new Date(Date.now() - daysAgo * 86_400_000);
   const parts = Object.fromEntries(
@@ -166,5 +166,9 @@ export function madridDate(daysAgo = 0) {
       .formatToParts(d)
       .map((p) => [p.type, p.value]),
   );
-  return { api: `${parts.day}-${parts.month}-${parts.year}`, weekday: parts.weekday as string };
+  return {
+    api: `${parts.day}-${parts.month}-${parts.year}`,
+    iso: `${parts.year}-${parts.month}-${parts.day}`,
+    weekday: parts.weekday as string,
+  };
 }
