@@ -81,6 +81,13 @@ export default function Home() {
     setTank(load("tank", "cuarto"));
     setLiters(load("liters", 40));
     setPlace(load<Place | null>("place", null));
+    // ?lugar=Valencia abre la web ya situada allí (enlaces por ciudad).
+    const lugar = new URLSearchParams(location.search).get("lugar")?.trim();
+    if (lugar)
+      fetch(`/api/geocode?q=${encodeURIComponent(lugar.slice(0, 80))}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p: Place | null) => p && setPlace(p))
+        .catch(() => {});
     setReady(true);
   }, []);
 
