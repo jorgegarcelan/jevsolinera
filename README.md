@@ -11,3 +11,5 @@
 cp .env.example .env.local   # pon tu TYPESAFE_API_KEY
 npm install && npm run dev
 ```
+
+Estilo: gasolinera americana de los 60 (`app/theme.css`). Fuentes: Big Shoulders, Yellowtail y DM Sans.

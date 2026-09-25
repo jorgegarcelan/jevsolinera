@@ -1,4 +1,4 @@
-/* Estructura común. Todo lo visual sale de variables que define cada estilo en themes.css. */
+/* Estructura común. Lo visual sale de variables que define theme.css (Americana 60s). */
 
 :root {
   --font-head: system-ui, sans-serif;
@@ -116,29 +116,6 @@ select {
   font-size: 15px;
 }
 
-.style-pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.style-pick select {
-  appearance: none;
-  background: var(--surface)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6'/%3E%3C/svg%3E")
-    no-repeat right 12px center;
-  border: var(--bw) solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-btn);
-  padding: 8px 32px 8px 12px;
-  font-weight: 600;
-  color: var(--ink);
-  cursor: pointer;
-}
-
 /* ---------- Paneles ---------- */
 
 .panel {
@@ -180,8 +157,7 @@ select {
 }
 
 .search input:focus,
-.liters input:focus,
-.style-pick select:focus-visible {
+.liters input:focus {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
 }

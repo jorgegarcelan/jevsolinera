@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import Trend from "@/components/Trend";
 import { FUELS, type FuelId } from "@/lib/minetur";
-import { DEFAULT_STYLE, STYLES, STYLE_IDS, type StyleId } from "@/lib/styles";
 import type { Analysis, StationResult } from "@/lib/types";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), {
@@ -58,7 +57,6 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | undefined>();
   const [ready, setReady] = useState(false);
-  const [style, setStyle] = useState<StyleId>(DEFAULT_STYLE);
 
   // Preferencias guardadas (solo en este navegador).
   useEffect(() => {
@@ -66,8 +64,6 @@ export default function Home() {
     setTank(load("tank", "cuarto"));
     setLiters(load("liters", 40));
     setPlace(load<Place | null>("place", null));
-    const st = document.documentElement.dataset.style as StyleId;
-    if (STYLE_IDS.includes(st)) setStyle(st);
     setReady(true);
   }, []);
 
@@ -97,20 +93,6 @@ export default function Home() {
     const id = setTimeout(() => analyze(place, fuel, tank, liters), 250);
     return () => clearTimeout(id);
   }, [ready, place, fuel, tank, liters, analyze]);
-
-  function pickStyle(st: StyleId) {
-    setStyle(st);
-    document.documentElement.dataset.style = st;
-    try {
-      localStorage.setItem("jevsolinera:style", st);
-    } catch {}
-    // Si llegaste con ?estilo=, que la URL refleje el estilo actual.
-    const url = new URL(location.href);
-    if (url.searchParams.has("estilo")) {
-      url.searchParams.set("estilo", st);
-      history.replaceState(null, "", url);
-    }
-  }
 
   function locate() {
     if (!navigator.geolocation) return setError("Tu navegador no permite geolocalización. Busca tu ciudad.");
@@ -162,16 +144,6 @@ export default function Home() {
           </span>
         </div>
         <p className="tagline">¿Echo hoy o espero? ¿Y dónde?</p>
-        <label className="style-pick">
-          <span>Estilo</span>
-          <select value={style} onChange={(e) => pickStyle(e.target.value as StyleId)}>
-            {STYLES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
       </header>
 
       <section className="panel controls" aria-label="Tus datos">
